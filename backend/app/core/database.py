@@ -4392,6 +4392,14 @@ async def run_migrations(conn):
         conn, "ALTER TABLE notification_providers ADD COLUMN on_ams_drying_suspended BOOLEAN DEFAULT TRUE"
     )
 
+    # Migration: Klipper/Moonraker printer support. `protocol` selects which
+    # client PrinterManager connects with ("bambu" default | "klipper");
+    # `moonraker_port` is only used for "klipper" printers (default 7125,
+    # applied in application code since column defaults don't backfill nulls
+    # on existing rows).
+    await _safe_execute(conn, "ALTER TABLE printers ADD COLUMN protocol VARCHAR(20) DEFAULT 'bambu'")
+    await _safe_execute(conn, "ALTER TABLE printers ADD COLUMN moonraker_port INTEGER")
+
 
 async def _migrate_backfill_variant_groups(conn) -> None:
     """Build variant groups from the slice provenance already on disk (#671 / #2570).

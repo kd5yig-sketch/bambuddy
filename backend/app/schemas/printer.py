@@ -1,18 +1,25 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 from backend.app.utils.printer_models import supports_nozzle_flow_type
 
 
 class PrinterBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
+    # "bambu" (default): serial_number/access_code are the real Bambu MQTT
+    # credentials. "klipper": serial_number is repurposed as a free-form
+    # unique identifier and access_code as the (optional) Moonraker API key —
+    # there is no separate schema/columns for those, to avoid a nullability
+    # migration on serial_number/access_code (see plan doc).
+    protocol: str = Field(default="bambu", pattern="^(bambu|klipper)$")
+    moonraker_port: int | None = Field(default=None, ge=1, le=65535)
     serial_number: str = Field(..., min_length=1, max_length=50)
 
     @field_validator("serial_number")
     @classmethod
-    def _normalize_serial_number(cls, v: str) -> str:
-        """Uppercase and trim the serial number.
+    def _normalize_serial_number(cls, v: str, info: ValidationInfo) -> str:
+        """Uppercase and trim the serial number (Bambu printers only).
 
         Bambu serial numbers are uppercase alphanumeric, and the MQTT report
         topic ``device/<serial>/report`` is case-sensitive. A serial entered
@@ -20,10 +27,15 @@ class PrinterBase(BaseModel):
         without error but never receives a message — the printer publishes to
         the correctly-cased topic, so every status field stays unknown (#1465).
         Normalising on input makes the subscribed topic always match.
+
+        Klipper printers have no such protocol constraint — serial_number is
+        just a user-chosen unique identifier there, so only trim/blank-check.
         """
-        normalized = v.strip().upper()
+        normalized = v.strip()
         if not normalized:
             raise ValueError("serial_number must not be blank")
+        if info.data.get("protocol", "bambu") == "bambu":
+            normalized = normalized.upper()
         return normalized
 
     ip_address: str = Field(
@@ -45,7 +57,12 @@ class PrinterCreate(PrinterBase):
     # access_code lives on the input shapes only — never on the default
     # PrinterResponse. Direct exposure on PRINTERS_READ would let a Viewer
     # connect to the printer's MQTT and bypass Bambuddy's RBAC.
-    access_code: str = Field(..., min_length=1, max_length=20)
+    #
+    # Required+non-blank for Bambu (it's the real MQTT access code). Klipper
+    # printers commonly run Moonraker with auth disabled on the local
+    # network, so it's optional there — enforced in the route handler where
+    # `protocol` is available, since Field() alone can't make it conditional.
+    access_code: str = Field(default="", max_length=100)
 
 
 class PlateDetectionROI(BaseModel):
@@ -65,6 +82,7 @@ class PrinterUpdate(BaseModel):
         pattern=r"^(\d{1,3}(\.\d{1,3}){3}|[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*)$",
     )
     access_code: str | None = None
+    moonraker_port: int | None = Field(default=None, ge=1, le=65535)
     model: str | None = None
     location: str | None = None
     is_active: bool | None = None

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, String, func
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.app.core.database import Base
@@ -14,6 +14,12 @@ class Printer(Base):
     serial_number: Mapped[str] = mapped_column(String(50), unique=True)
     ip_address: Mapped[str] = mapped_column(String(253))
     access_code: Mapped[str] = mapped_column(String(20))
+    # "bambu" (default) or "klipper". Determines which client (BambuMQTTClient
+    # vs MoonrakerClient) PrinterManager connects with. For "klipper" printers,
+    # serial_number is repurposed as a free-form unique identifier and
+    # access_code as the (optional) Moonraker API key — see printer.py schema.
+    protocol: Mapped[str] = mapped_column(String(20), default="bambu")
+    moonraker_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
     model: Mapped[str | None] = mapped_column(String(50))
     location: Mapped[str | None] = mapped_column(String(100))  # Group/location name
     nozzle_count: Mapped[int] = mapped_column(default=1)  # 1 or 2, auto-detected from MQTT

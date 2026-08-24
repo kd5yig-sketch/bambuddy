@@ -352,6 +352,14 @@ export interface OverlayStatus {
 export interface Printer {
   id: number;
   name: string;
+  // "bambu" (default, and what an absent/undefined value means — kept
+  // optional so the many existing test fixtures that predate Klipper
+  // support don't all need updating) or "klipper". For "klipper" printers,
+  // serial_number is a free-form unique identifier (not a real serial) and
+  // access_code, when present, is a Moonraker API key rather than a Bambu
+  // MQTT access code — see backend/app/schemas/printer.py.
+  protocol?: 'bambu' | 'klipper';
+  moonraker_port?: number | null;  // Klipper printers only; defaults to 7125
   serial_number: string;
   ip_address: string;
   // Optional because the backend only returns access_code when the caller has
@@ -597,9 +605,13 @@ export interface PrinterStatus {
 
 export interface PrinterCreate {
   name: string;
+  protocol?: 'bambu' | 'klipper';  // Defaults to 'bambu' server-side
+  moonraker_port?: number;  // Klipper only; defaults to 7125
   serial_number: string;
   ip_address: string;
-  access_code: string;
+  // Required for 'bambu' (real MQTT access code); optional for 'klipper'
+  // (Moonraker API key, commonly unset when Moonraker auth is disabled).
+  access_code?: string;
   model?: string;
   location?: string;
   auto_archive?: boolean;

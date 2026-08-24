@@ -6952,6 +6952,7 @@ export function AddPrinterModal({
   const { t } = useTranslation();
   const [form, setForm] = useState<PrinterCreate>({
     name: '',
+    protocol: 'bambu',
     serial_number: '',
     ip_address: '',
     access_code: '',
@@ -6959,6 +6960,7 @@ export function AddPrinterModal({
     location: '',
     auto_archive: true,
   });
+  const isKlipper = form.protocol === 'klipper';
 
   // Discovery state
   const [discovering, setDiscovering] = useState(false);
@@ -7010,6 +7012,15 @@ export function AddPrinterModal({
 
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // The pre-flight diagnostic (port 8883/990 probes, FTPS handshake, etc.)
+    // is entirely Bambu-protocol-specific — every check would report "fail"
+    // for a Klipper/Moonraker printer regardless of whether it's reachable,
+    // so it's skipped rather than showing a bogus warning on every add.
+    // POST /printers/ still does its own real connectivity check either way.
+    if (isKlipper) {
+      onAdd(form);
+      return;
+    }
     setCheckingSave(true);
     try {
       const result = await api.diagnoseConnection({
@@ -7285,6 +7296,20 @@ export function AddPrinterModal({
           </div>
           <form onSubmit={handleAddSubmit} className="space-y-4">
             <div>
+              <label className="block text-sm text-bambu-gray mb-1">{t('printers.protocol.label')}</label>
+              <select
+                className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                value={form.protocol || 'bambu'}
+                onChange={(e) => {
+                  const protocol = e.target.value as 'bambu' | 'klipper';
+                  setForm({ ...form, protocol, model: protocol === 'klipper' ? '' : form.model });
+                }}
+              >
+                <option value="bambu">{t('printers.protocol.bambu')}</option>
+                <option value="klipper">{t('printers.protocol.klipper')}</option>
+              </select>
+            </div>
+            <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.name')}</label>
               <input
                 type="text"
@@ -7307,64 +7332,83 @@ export function AddPrinterModal({
                 placeholder="192.168.1.100 or printer.local"
               />
             </div>
+            {isKlipper && (
+              <div>
+                <label className="block text-sm text-bambu-gray mb-1">{t('printers.protocol.moonrakerPort')}</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                  value={form.moonraker_port ?? 7125}
+                  onChange={(e) => setForm({ ...form, moonraker_port: Number(e.target.value) })}
+                />
+              </div>
+            )}
             <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('printers.serialNumber')}</label>
+              <label className="block text-sm text-bambu-gray mb-1">
+                {isKlipper ? t('printers.protocol.identifier') : t('printers.serialNumber')}
+              </label>
               <input
                 type="text"
                 required
                 className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
                 value={form.serial_number}
                 onChange={(e) => setForm({ ...form, serial_number: e.target.value })}
-                placeholder="01P00A000000000"
+                placeholder={isKlipper ? t('printers.protocol.identifierPlaceholder') : '01P00A000000000'}
               />
             </div>
             <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('printers.accessCode')}</label>
+              <label className="block text-sm text-bambu-gray mb-1">
+                {isKlipper ? t('printers.protocol.moonrakerApiKey') : t('printers.accessCode')}
+              </label>
               <input
                 type="password"
-                required
+                required={!isKlipper}
                 className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
                 value={form.access_code}
                 onChange={(e) => setForm({ ...form, access_code: e.target.value })}
-                placeholder={t('printers.modal.fromPrinterSettings')}
+                placeholder={isKlipper ? t('printers.protocol.moonrakerApiKeyPlaceholder') : t('printers.modal.fromPrinterSettings')}
               />
             </div>
-            <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('printers.modal.modelOptional')}</label>
-              <select
-                className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
-                value={form.model || ''}
-                onChange={(e) => setForm({ ...form, model: e.target.value })}
-              >
-                <option value="">{t('printers.modal.selectModel')}</option>
-                <optgroup label="A1 Series">
-                  <option value="A1">A1</option>
-                  <option value="A1 Mini">A1 Mini</option>
-                </optgroup>
-                <optgroup label="A2 Series">
-                  <option value="A2L">A2L</option>
-                </optgroup>
-                <optgroup label="H2 Series">
-                  <option value="H2C">H2C</option>
-                  <option value="H2D">H2D</option>
-                  <option value="H2D Pro">H2D Pro</option>
-                  <option value="H2S">H2S</option>
-                </optgroup>
-                <optgroup label="P Series">
-                  <option value="P1P">P1P</option>
-                  <option value="P1S">P1S</option>
-                  <option value="P2S">P2S</option>
-                </optgroup>
-                <optgroup label="X1 Series">
-                  <option value="X1">X1</option>
-                  <option value="X1C">X1 Carbon</option>
-                  <option value="X1E">X1E</option>
-                </optgroup>
-                <optgroup label="X2 Series">
-                  <option value="X2D">X2D</option>
-                </optgroup>
-              </select>
-            </div>
+            {!isKlipper && (
+              <div>
+                <label className="block text-sm text-bambu-gray mb-1">{t('printers.modal.modelOptional')}</label>
+                <select
+                  className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                  value={form.model || ''}
+                  onChange={(e) => setForm({ ...form, model: e.target.value })}
+                >
+                  <option value="">{t('printers.modal.selectModel')}</option>
+                  <optgroup label="A1 Series">
+                    <option value="A1">A1</option>
+                    <option value="A1 Mini">A1 Mini</option>
+                  </optgroup>
+                  <optgroup label="A2 Series">
+                    <option value="A2L">A2L</option>
+                  </optgroup>
+                  <optgroup label="H2 Series">
+                    <option value="H2C">H2C</option>
+                    <option value="H2D">H2D</option>
+                    <option value="H2D Pro">H2D Pro</option>
+                    <option value="H2S">H2S</option>
+                  </optgroup>
+                  <optgroup label="P Series">
+                    <option value="P1P">P1P</option>
+                    <option value="P1S">P1S</option>
+                    <option value="P2S">P2S</option>
+                  </optgroup>
+                  <optgroup label="X1 Series">
+                    <option value="X1">X1</option>
+                    <option value="X1C">X1 Carbon</option>
+                    <option value="X1E">X1E</option>
+                  </optgroup>
+                  <optgroup label="X2 Series">
+                    <option value="X2D">X2D</option>
+                  </optgroup>
+                </select>
+              </div>
+            )}
             <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.modal.locationGroup')}</label>
               <input
@@ -7737,9 +7781,11 @@ function EditPrinterModal({
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
+  const isKlipper = printer.protocol === 'klipper';
   const [form, setForm] = useState({
     name: printer.name,
     ip_address: printer.ip_address,
+    moonraker_port: printer.moonraker_port ?? 7125,
     access_code: '',
     model: printer.model || '',
     location: printer.location || '',
@@ -7780,6 +7826,9 @@ function EditPrinterModal({
       auto_archive: form.auto_archive,
       is_active: form.is_active,
     };
+    if (isKlipper) {
+      data.moonraker_port = form.moonraker_port;
+    }
     // Only include access_code if it was changed
     if (form.access_code) {
       data.access_code = form.access_code;
@@ -7789,6 +7838,12 @@ function EditPrinterModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // See AddPrinterModal.handleAddSubmit — the pre-flight diagnostic only
+    // knows how to probe Bambu's ports/handshake.
+    if (isKlipper) {
+      doSave();
+      return;
+    }
     setCheckingSave(true);
     try {
       const result = await api.diagnoseConnection({
@@ -7841,7 +7896,9 @@ function EditPrinterModal({
               />
             </div>
             <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('printers.serialNumber')}</label>
+              <label className="block text-sm text-bambu-gray mb-1">
+                {isKlipper ? t('printers.protocol.identifier') : t('printers.serialNumber')}
+              </label>
               <input
                 type="text"
                 disabled
@@ -7850,16 +7907,32 @@ function EditPrinterModal({
               />
               <p className="text-xs text-bambu-gray mt-1">{t('printers.serialCannotBeChanged')}</p>
             </div>
+            {isKlipper && (
+              <div>
+                <label className="block text-sm text-bambu-gray mb-1">{t('printers.protocol.moonrakerPort')}</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                  value={form.moonraker_port}
+                  onChange={(e) => setForm({ ...form, moonraker_port: Number(e.target.value) })}
+                />
+              </div>
+            )}
             <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('printers.accessCode')}</label>
+              <label className="block text-sm text-bambu-gray mb-1">
+                {isKlipper ? t('printers.protocol.moonrakerApiKey') : t('printers.accessCode')}
+              </label>
               <input
                 type="password"
                 className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
                 value={form.access_code}
                 onChange={(e) => setForm({ ...form, access_code: e.target.value })}
-                placeholder={t('printers.accessCodePlaceholder')}
+                placeholder={isKlipper ? t('printers.protocol.moonrakerApiKeyPlaceholder') : t('printers.accessCodePlaceholder')}
               />
             </div>
+            {!isKlipper && (
             <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.model')}</label>
               <select
@@ -7896,6 +7969,7 @@ function EditPrinterModal({
                 </optgroup>
               </select>
             </div>
+            )}
             <div>
               <label className="block text-sm text-bambu-gray mb-1">Location / Group</label>
               <input

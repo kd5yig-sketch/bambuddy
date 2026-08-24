@@ -144,10 +144,15 @@ async def create_printer(
     if result.scalar_one_or_none():
         raise HTTPException(400, "Printer with this serial number already exists")
 
+    if printer_data.protocol == "bambu" and not printer_data.access_code.strip():
+        raise HTTPException(400, "access_code is required for Bambu printers")
+
     test_result = await printer_manager.test_connection(
         ip_address=printer_data.ip_address,
         serial_number=printer_data.serial_number,
         access_code=printer_data.access_code,
+        protocol=printer_data.protocol,
+        moonraker_port=printer_data.moonraker_port,
     )
     if not test_result.get("success"):
         # The frontend renders the user-facing message via i18n on `code`;
@@ -379,7 +384,7 @@ async def update_printer(
     await db.refresh(printer)
 
     # Reconnect if connection settings changed
-    if any(k in update_data for k in ["ip_address", "access_code", "is_active"]):
+    if any(k in update_data for k in ["ip_address", "access_code", "is_active", "moonraker_port"]):
         printer_manager.disconnect_printer(printer_id)
         if printer.is_active:
             await printer_manager.connect_printer(printer)

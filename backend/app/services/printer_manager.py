@@ -9,6 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.printer import Printer
 from backend.app.services.bambu_mqtt import BambuMQTTClient, MQTTLogEntry, PrinterState, get_stage_name
+from backend.app.services.moonraker_client import MoonrakerClient
+
+PrinterClient = BambuMQTTClient | MoonrakerClient
 
 logger = logging.getLogger(__name__)
 
@@ -395,7 +398,7 @@ class PrinterManager:
     """Manager for multiple printer connections."""
 
     def __init__(self):
-        self._clients: dict[int, BambuMQTTClient] = {}
+        self._clients: dict[int, PrinterClient] = {}
         self._models: dict[int, str | None] = {}  # Cache printer models for feature detection
         self._printer_info: dict[int, PrinterInfo] = {}  # Cache printer name/serial for callbacks
         self._on_print_start: Callable[[int, dict], None] | None = None
@@ -744,24 +747,38 @@ class PrinterManager:
             if self._on_tray_change:
                 self._schedule_async(self._on_tray_change(printer_id, tray_global, layer_num))
 
-        client = BambuMQTTClient(
-            ip_address=printer.ip_address,
-            serial_number=printer.serial_number,
-            access_code=printer.access_code,
-            model=printer.model,
-            on_state_change=on_state_change,
-            on_print_start=on_print_start,
-            on_print_complete=on_print_complete,
-            on_ams_change=on_ams_change,
-            on_layer_change=on_layer_change,
-            on_print_progress=on_print_progress,
-            on_bed_temp_update=on_bed_temp_update,
-            on_drying_complete=on_drying_complete,
-            on_print_running_observed=on_print_running_observed,
-            on_finish_photo_moment=on_finish_photo_moment,
-            on_assignment_verified=on_assignment_verified,
-            on_tray_change=on_tray_change,
-        )
+        client: PrinterClient
+        if printer.protocol == "klipper":
+            client = MoonrakerClient(
+                ip_address=printer.ip_address,
+                port=printer.moonraker_port,
+                api_key=printer.access_code,
+                model=printer.model,
+                on_state_change=on_state_change,
+                on_print_start=on_print_start,
+                on_print_complete=on_print_complete,
+                on_print_progress=on_print_progress,
+                on_bed_temp_update=on_bed_temp_update,
+            )
+        else:
+            client = BambuMQTTClient(
+                ip_address=printer.ip_address,
+                serial_number=printer.serial_number,
+                access_code=printer.access_code,
+                model=printer.model,
+                on_state_change=on_state_change,
+                on_print_start=on_print_start,
+                on_print_complete=on_print_complete,
+                on_ams_change=on_ams_change,
+                on_layer_change=on_layer_change,
+                on_print_progress=on_print_progress,
+                on_bed_temp_update=on_bed_temp_update,
+                on_drying_complete=on_drying_complete,
+                on_print_running_observed=on_print_running_observed,
+                on_finish_photo_moment=on_finish_photo_moment,
+                on_assignment_verified=on_assignment_verified,
+                on_tray_change=on_tray_change,
+            )
 
         client.connect()
         self._clients[printer_id] = client
@@ -1040,6 +1057,8 @@ class PrinterManager:
         ip_address: str,
         serial_number: str,
         access_code: str,
+        protocol: str = "bambu",
+        moonraker_port: int | None = None,
     ) -> dict:
         """Test connection to a printer without persisting.
 
@@ -1050,12 +1069,21 @@ class PrinterManager:
         asyncio event loop and every other HTTP request queues behind it. The
         original synchronous teardown produced the #1445 "Docker container
         hangs" symptom on P1S when called from POST /printers/.
+
+        MoonrakerClient has no such thread to join (it's a plain asyncio
+        task), so its teardown runs directly on the loop instead of via
+        `asyncio.to_thread` — dispatching Task.cancel() to a worker thread
+        would be unsafe (Task.cancel() isn't thread-safe).
         """
-        client = BambuMQTTClient(
-            ip_address=ip_address,
-            serial_number=serial_number,
-            access_code=access_code,
-        )
+        client: PrinterClient
+        if protocol == "klipper":
+            client = MoonrakerClient(ip_address=ip_address, port=moonraker_port, api_key=access_code)
+        else:
+            client = BambuMQTTClient(
+                ip_address=ip_address,
+                serial_number=serial_number,
+                access_code=access_code,
+            )
 
         try:
             client.connect()
@@ -1074,9 +1102,12 @@ class PrinterManager:
                 "reason": None if client.state.connected else client.last_connect_error,
             }
         finally:
-            # Off-loop teardown — see docstring. paho's loop_stop() joins the
-            # network thread which may still be in a slow TLS handshake.
-            await asyncio.to_thread(client.disconnect)
+            if isinstance(client, MoonrakerClient):
+                client.disconnect()
+            else:
+                # Off-loop teardown — see docstring. paho's loop_stop() joins
+                # the network thread which may still be in a slow handshake.
+                await asyncio.to_thread(client.disconnect)
 
         return result
 
