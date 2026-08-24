@@ -27,7 +27,7 @@ from backend.app.models.settings import Settings
 from backend.app.models.smart_plug import SmartPlug
 from backend.app.models.spool_assignment import SpoolAssignment
 from backend.app.models.spoolman_slot_assignment import SpoolmanSlotAssignment
-from backend.app.services import print_dispatch_context
+from backend.app.services import moonraker_files, print_dispatch_context
 from backend.app.services.bambu_ftp import (
     UploadCancelled,
     cache_3mf_download,
@@ -5615,15 +5615,27 @@ class PrintScheduler:
         # pending->printing CAS) transparently open a fresh transaction.
         await db.commit()
 
+        # Klipper printers upload via Moonraker's HTTP file API instead of
+        # Bambu's FTPS — same function shapes (see moonraker_files.py's
+        # module docstring), so the rest of this method's upload/retry/
+        # progress logic is unchanged below, just pointed at a different fn.
+        if printer.protocol == "klipper":
+            file_delete_async = moonraker_files.delete_file_async
+            file_upload_async = moonraker_files.upload_file_async
+            transfer_kwargs = {"port": printer.moonraker_port}
+        else:
+            file_delete_async = delete_file_async
+            file_upload_async = upload_file_async
+            transfer_kwargs = {"socket_timeout": ftp_timeout, "printer_model": printer.model}
+
         # Delete existing file if present (avoids 553 error on overwrite)
         try:
             logger.debug("Queue item %s: Deleting existing file %s if present...", item.id, remote_path)
-            delete_result = await delete_file_async(
+            delete_result = await file_delete_async(
                 printer.ip_address,
                 printer.access_code,
                 remote_path,
-                socket_timeout=ftp_timeout,
-                printer_model=printer.model,
+                **transfer_kwargs,
             )
             logger.debug("Queue item %s: Delete result: %s", item.id, delete_result)
         except Exception as e:
@@ -5658,27 +5670,25 @@ class PrintScheduler:
         try:
             if ftp_retry_enabled:
                 uploaded = await with_ftp_retry(
-                    upload_file_async,
+                    file_upload_async,
                     printer.ip_address,
                     printer.access_code,
                     file_path,
                     remote_path,
-                    socket_timeout=ftp_timeout,
-                    printer_model=printer.model,
                     progress_callback=progress_bridge,
                     max_retries=ftp_retry_count,
                     retry_delay=ftp_retry_delay,
                     operation_name=f"Upload print to {printer.name}",
+                    **transfer_kwargs,
                 )
             else:
-                uploaded = await upload_file_async(
+                uploaded = await file_upload_async(
                     printer.ip_address,
                     printer.access_code,
                     file_path,
                     remote_path,
-                    socket_timeout=ftp_timeout,
-                    printer_model=printer.model,
                     progress_callback=progress_bridge,
+                    **transfer_kwargs,
                 )
         except UploadCancelled as e:
             uploaded = False

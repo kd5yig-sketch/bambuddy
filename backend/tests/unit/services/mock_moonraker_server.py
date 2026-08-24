@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 
 from aiohttp import WSMsgType, web
 
 
 class MockMoonrakerServer:
-    """A minimal Moonraker instance: /websocket JSON-RPC + status notifications."""
+    """A minimal Moonraker instance: /websocket JSON-RPC + status notifications,
+    plus the /server/files/* HTTP API for testing moonraker_files.py."""
 
     def __init__(self, api_key: str | None = None):
         self.api_key = api_key
@@ -33,9 +35,18 @@ class MockMoonrakerServer:
         self.port: int | None = None
         self.reject_handshake_status: int | None = None  # e.g. 401 to simulate auth failure
 
+        # In-memory gcodes root: {filename: bytes}. Mirrors mock_ftp_server's
+        # real-filesystem-backed approach closely enough for HTTP semantics.
+        self.files: dict[str, bytes] = {}
+        self.fail_upload = False  # force the next upload(s) to fail, for error-path tests
+
     async def start(self, port: int = 0) -> int:
         app = web.Application()
         app.router.add_get("/websocket", self._handle_ws)
+        app.router.add_get("/server/files/list", self._handle_list_files)
+        app.router.add_post("/server/files/upload", self._handle_upload)
+        app.router.add_get("/server/files/gcodes/{filename}", self._handle_download)
+        app.router.add_delete("/server/files/gcodes/{filename}", self._handle_delete)
         self._runner = web.AppRunner(app)
         await self._runner.setup()
         self._site = web.TCPSite(self._runner, "127.0.0.1", port)
@@ -92,6 +103,60 @@ class MockMoonrakerServer:
         for ws in list(self.subscribed_sockets):
             if not ws.closed:
                 await ws.send_str(notification)
+
+    def _check_auth(self, request: web.Request) -> web.Response | None:
+        if self.api_key and request.headers.get("X-Api-Key") != self.api_key:
+            return web.Response(status=401)
+        return None
+
+    async def _handle_list_files(self, request: web.Request) -> web.Response:
+        if (rejected := self._check_auth(request)) is not None:
+            return rejected
+        return web.json_response(
+            {
+                "result": [
+                    {"path": name, "size": len(data), "modified": time.time()} for name, data in self.files.items()
+                ]
+            }
+        )
+
+    async def _handle_upload(self, request: web.Request) -> web.Response:
+        if (rejected := self._check_auth(request)) is not None:
+            return rejected
+        if self.fail_upload:
+            return web.Response(status=500, text="simulated upload failure")
+
+        reader = await request.multipart()
+        filename = None
+        content = b""
+        async for part in reader:
+            if part.name == "file":
+                filename = part.filename
+                content = await part.read(decode=False)
+            else:
+                await part.read()  # drain the "root" field etc.
+
+        if filename is None:
+            return web.Response(status=400, text="no file part")
+        self.files[filename] = content
+        return web.json_response({"result": {"item": {"path": filename, "size": len(content)}}}, status=201)
+
+    async def _handle_download(self, request: web.Request) -> web.StreamResponse:
+        if (rejected := self._check_auth(request)) is not None:
+            return rejected
+        filename = request.match_info["filename"]
+        if filename not in self.files:
+            return web.Response(status=404)
+        return web.Response(body=self.files[filename])
+
+    async def _handle_delete(self, request: web.Request) -> web.Response:
+        if (rejected := self._check_auth(request)) is not None:
+            return rejected
+        filename = request.match_info["filename"]
+        if filename not in self.files:
+            return web.Response(status=404)
+        del self.files[filename]
+        return web.json_response({"result": filename})
 
     def calls_for(self, method: str) -> list[dict]:
         return [c for c in self.received_calls if c["method"] == method]

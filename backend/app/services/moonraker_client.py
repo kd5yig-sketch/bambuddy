@@ -340,6 +340,17 @@ class MoonrakerClient:
     def send_gcode(self, gcode: str) -> bool:
         return self._dispatch(self._send_rpc("printer.gcode.script", {"script": gcode}))
 
+    def start_print(self, filename: str, *_args, **_kwargs) -> bool:
+        """Start printing a file already uploaded to the gcodes root.
+
+        Accepts and ignores BambuMQTTClient.start_print's AMS/calibration
+        kwargs (plate_id, ams_mapping, bed_levelling, ...) — PrinterManager
+        passes them through unconditionally from print_scheduler.py so that
+        call site doesn't need a protocol branch; Klipper has no equivalent
+        concepts for any of them.
+        """
+        return self._dispatch(self._send_rpc("printer.print.start", {"filename": filename.lstrip("/")}))
+
     def pause_print(self) -> bool:
         return self._dispatch(self._send_rpc("printer.print.pause"))
 
