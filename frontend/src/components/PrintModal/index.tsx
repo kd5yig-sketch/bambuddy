@@ -1471,11 +1471,24 @@ export function PrintModal({
   const TitleIcon = modalConfig.icon;
   const SubmitIcon = modalConfig.submitIcon;
 
+  // True only when every selected printer is Klipper — used to hide the
+  // AMS/plate/calibration UI below, none of which Klipper has an equivalent
+  // for. A mixed Bambu+Klipper selection intentionally still shows this UI:
+  // MoonrakerClient.start_print() already discards these fields for its
+  // member(s) of the batch, so it's harmless, just not tailored. Always
+  // false in 'model' mode — Klipper printers have no Bambu `model` value
+  // and can never match a model-based target.
+  const isKlipperTarget = useMemo(() => {
+    if (assignmentMode === 'model') return false;
+    if (!printers || selectedPrinters.length === 0) return false;
+    return selectedPrinters.every(id => printers.find(p => p.id === id)?.protocol === 'klipper');
+  }, [assignmentMode, printers, selectedPrinters]);
+
   // Show filament mapping when:
   // - Single printer selected
   // - For archives: plate is selected (for multi-plate) or not required (single-plate)
   // - For library files: always show (no plate selection)
-  const showFilamentMapping = effectivePrinterId && selectedPlates.size <= 1 && (
+  const showFilamentMapping = !isKlipperTarget && effectivePrinterId && selectedPlates.size <= 1 && (
     isLibraryFile || (isMultiPlate ? selectedPlate !== null : true)
   );
 
@@ -1490,7 +1503,7 @@ export function PrintModal({
   // plate *per printer*, so those items ship without a mapping and the scheduler
   // computes one per plate when it picks the printer.
   const showPerPlateFilamentMapping =
-    !!effectivePrinterId && isMultiPlateSelection && selectedPrinters.length === 1;
+    !isKlipperTarget && !!effectivePrinterId && isMultiPlateSelection && selectedPrinters.length === 1;
 
   // Model mode has no printer and so no trays to map onto; what it offers instead
   // is the filament each slot must be printed in, which the scheduler matches
@@ -1499,7 +1512,8 @@ export function PrintModal({
   // Cross-model items have no targetModel by design — their candidates each
   // carry their own — so gate on having somewhere to source choices from.
   const showFilamentOverride =
-    assignmentMode === 'model'
+    !isKlipperTarget
+    && assignmentMode === 'model'
     && (isCrossModel || !!targetModel)
     && !!effectiveAvailableFilaments
     && effectiveAvailableFilaments.length > 0;
@@ -1513,13 +1527,14 @@ export function PrintModal({
     [],
   );
   const showDualNozzleOptions = useMemo(() => {
+    if (isKlipperTarget) return false;
     if (assignmentMode === 'model') {
       if (!targetModel) return false;
       return DUAL_NOZZLE_MODELS.has(targetModel.toUpperCase().replace(/[\s-]/g, ''));
     }
     if (!printers || selectedPrinters.length === 0) return false;
     return selectedPrinters.some(id => printers.find(p => p.id === id)?.nozzle_count === 2);
-  }, [assignmentMode, targetModel, printers, selectedPrinters, DUAL_NOZZLE_MODELS]);
+  }, [assignmentMode, targetModel, printers, selectedPrinters, DUAL_NOZZLE_MODELS, isKlipperTarget]);
 
   return (
     <div
@@ -1804,8 +1819,10 @@ export function PrintModal({
               );
             })}
 
-            {/* Print options */}
-            {(mode === 'create' || effectivePrinterCount > 0 || (assignmentMode === 'model' && targetModel)) && (
+            {/* Print options — bed-leveling/flow/vibration/nozzle-offset
+                calibration are all Bambu-only, so this panel is skipped
+                entirely for an all-Klipper selection (see isKlipperTarget). */}
+            {!isKlipperTarget && (mode === 'create' || effectivePrinterCount > 0 || (assignmentMode === 'model' && targetModel)) && (
               <PrintOptionsPanel
                 options={printOptions}
                 onChange={setPrintOptions}
