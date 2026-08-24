@@ -4414,18 +4414,24 @@ function PrinterCard({
                   <div className="flex flex-wrap items-start justify-between gap-x-2 gap-y-2">
                     {/* Left: Secondary controls */}
                     <div className="flex flex-wrap items-center gap-2 min-w-0">
-                      <button
-                        onClick={() => chamberLightMutation.mutate(!status.chamber_light)}
-                        disabled={!status.connected || chamberLightMutation.isPending || !hasPermission('printers:control')}
-                        className={`${iconControlClass} ${
-                          status.chamber_light
-                            ? 'bg-yellow-50 dark:bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 hover:bg-yellow-500/20'
-                            : 'bg-bambu-dark text-bambu-gray/50 hover:bg-bambu-dark-tertiary hover:text-white'
-                        }`}
-                        title={!hasPermission('printers:control') ? t('printers.permission.noControl') : (status.chamber_light ? t('printers.chamberLightOff') : t('printers.chamberLightOn'))}
-                      >
-                        <ChamberLight on={status.chamber_light ?? false} className="w-[var(--pc-i4,1rem)] h-[var(--pc-i4,1rem)]" />
-                      </button>
+                      {/* Chamber light — Klipper's MoonrakerClient has no
+                          equivalent (unlike airduct mode/select-extruder
+                          below, this one isn't already gated by a Bambu
+                          model/nozzle_count check, so it needs its own). */}
+                      {printer.protocol !== 'klipper' && (
+                        <button
+                          onClick={() => chamberLightMutation.mutate(!status.chamber_light)}
+                          disabled={!status.connected || chamberLightMutation.isPending || !hasPermission('printers:control')}
+                          className={`${iconControlClass} ${
+                            status.chamber_light
+                              ? 'bg-yellow-50 dark:bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 hover:bg-yellow-500/20'
+                              : 'bg-bambu-dark text-bambu-gray/50 hover:bg-bambu-dark-tertiary hover:text-white'
+                          }`}
+                          title={!hasPermission('printers:control') ? t('printers.permission.noControl') : (status.chamber_light ? t('printers.chamberLightOff') : t('printers.chamberLightOn'))}
+                        >
+                          <ChamberLight on={status.chamber_light ?? false} className="w-[var(--pc-i4,1rem)] h-[var(--pc-i4,1rem)]" />
+                        </button>
+                      )}
 
                       {/* Airduct Mode (P2S / X2D / H2*) */}
                       {(['P2S', 'X2D', 'H2D', 'H2C', 'H2S'].includes(printer.model ?? '')) && (() => {

@@ -154,6 +154,39 @@ async def download_file_async(
         return False
 
 
+async def download_file_bytes_async(
+    ip_address: str,
+    access_code: str,
+    remote_path: str,
+    socket_timeout: float | None = None,  # noqa: ARG001 - call-site symmetry with bambu_ftp
+    printer_model: str | None = None,  # noqa: ARG001 - call-site symmetry with bambu_ftp
+    timeout: float = 300.0,
+    expected_size: int | None = None,  # noqa: ARG001 - bambu_ftp's SD-card-corruption guard; HTTP has no equivalent failure mode
+    port: int | None = None,
+) -> bytes | None:
+    """Download a file from a Klipper printer's gcodes root, returned as bytes.
+
+    Mirrors bambu_ftp.download_file_bytes_async's signature/return — used by
+    printers.py's file-preview/thumbnail/zip routes, which want the bytes
+    in memory rather than written to a local path (see download_file_async).
+    """
+    filename = remote_path.lstrip("/")
+    url = f"{_base_url(ip_address, port)}/server/files/gcodes/{filename}"
+    try:
+        async with (
+            aiohttp.ClientSession(
+                headers=_headers(access_code), timeout=aiohttp.ClientTimeout(total=timeout)
+            ) as session,
+            session.get(url) as resp,
+        ):
+            if resp.status != 200:
+                return None
+            return await resp.read()
+    except (aiohttp.ClientError, TimeoutError) as e:
+        logger.warning("Moonraker download of %s from %s failed: %s", remote_path, ip_address, e)
+        return None
+
+
 async def list_files_async(
     ip_address: str,
     access_code: str,
@@ -233,3 +266,40 @@ async def delete_file_async(
     except (aiohttp.ClientError, TimeoutError) as e:
         logger.warning("Moonraker delete of %s on %s failed: %s", remote_path, ip_address, e)
         return DeleteResult.FAILED
+
+
+async def get_storage_info_async(
+    ip_address: str,
+    access_code: str,
+    socket_timeout: float | None = None,  # noqa: ARG001 - call-site symmetry with bambu_ftp
+    printer_model: str | None = None,  # noqa: ARG001 - call-site symmetry with bambu_ftp
+    timeout: float = 60.0,
+    port: int | None = None,
+) -> dict | None:
+    """Get gcodes-root disk usage from a Klipper printer via Moonraker.
+
+    Moonraker's directory listing includes disk_usage for the queried root,
+    so this reuses /server/files/directory rather than a dedicated endpoint.
+    Returns the same {"free_bytes", "used_bytes"} shape as
+    bambu_ftp.get_storage_info_async.
+    """
+    url = f"{_base_url(ip_address, port)}/server/files/directory"
+    try:
+        async with (
+            aiohttp.ClientSession(
+                headers=_headers(access_code), timeout=aiohttp.ClientTimeout(total=timeout)
+            ) as session,
+            session.get(url, params={"path": "gcodes"}) as resp,
+        ):
+            if resp.status != 200:
+                return None
+            data = await resp.json()
+    except (aiohttp.ClientError, TimeoutError) as e:
+        logger.info("Moonraker get_storage_info failed for %s: %s", ip_address, e)
+        return None
+
+    disk_usage = data.get("result", {}).get("disk_usage", {})
+    return {
+        "free_bytes": disk_usage.get("free"),
+        "used_bytes": disk_usage.get("used"),
+    }

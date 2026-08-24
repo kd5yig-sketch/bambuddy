@@ -39,6 +39,7 @@ class MockMoonrakerServer:
         # real-filesystem-backed approach closely enough for HTTP semantics.
         self.files: dict[str, bytes] = {}
         self.fail_upload = False  # force the next upload(s) to fail, for error-path tests
+        self.disk_usage = {"total": 1_000_000_000, "used": 250_000_000, "free": 750_000_000}
 
     async def start(self, port: int = 0) -> int:
         app = web.Application()
@@ -47,6 +48,7 @@ class MockMoonrakerServer:
         app.router.add_post("/server/files/upload", self._handle_upload)
         app.router.add_get("/server/files/gcodes/{filename}", self._handle_download)
         app.router.add_delete("/server/files/gcodes/{filename}", self._handle_delete)
+        app.router.add_get("/server/files/directory", self._handle_directory)
         self._runner = web.AppRunner(app)
         await self._runner.setup()
         self._site = web.TCPSite(self._runner, "127.0.0.1", port)
@@ -157,6 +159,11 @@ class MockMoonrakerServer:
             return web.Response(status=404)
         del self.files[filename]
         return web.json_response({"result": filename})
+
+    async def _handle_directory(self, request: web.Request) -> web.Response:
+        if (rejected := self._check_auth(request)) is not None:
+            return rejected
+        return web.json_response({"result": {"dirs": [], "files": [], "disk_usage": self.disk_usage}})
 
     def calls_for(self, method: str) -> list[dict]:
         return [c for c in self.received_calls if c["method"] == method]

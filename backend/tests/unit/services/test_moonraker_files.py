@@ -12,6 +12,8 @@ from backend.app.services.bambu_ftp import DeleteResult, UploadCancelled
 from backend.app.services.moonraker_files import (
     delete_file_async,
     download_file_async,
+    download_file_bytes_async,
+    get_storage_info_async,
     list_files_async,
     upload_file_async,
 )
@@ -146,3 +148,31 @@ class TestDelete:
     async def test_delete_unreachable_host_returns_failed(self):
         result = await delete_file_async("127.0.0.1", "", "/f.gcode", port=_find_free_port())
         assert result == DeleteResult.FAILED
+
+
+class TestDownloadBytes:
+    """download_file_bytes_async — used by printers.py's preview/thumbnail/zip routes."""
+
+    async def test_download_bytes_success(self, moonraker_server):
+        moonraker_server.files["preview.gcode"] = b"G28\nG1 X10\n"
+        data = await download_file_bytes_async("127.0.0.1", "", "/preview.gcode", port=moonraker_server.port)
+        assert data == b"G28\nG1 X10\n"
+
+    async def test_download_bytes_missing_file_returns_none(self, moonraker_server):
+        data = await download_file_bytes_async("127.0.0.1", "", "/nope.gcode", port=moonraker_server.port)
+        assert data is None
+
+    async def test_download_bytes_unreachable_host_returns_none(self):
+        data = await download_file_bytes_async("127.0.0.1", "", "/f.gcode", port=_find_free_port())
+        assert data is None
+
+
+class TestStorageInfo:
+    async def test_storage_info_returns_expected_shape(self, moonraker_server):
+        moonraker_server.disk_usage = {"total": 100, "used": 40, "free": 60}
+        info = await get_storage_info_async("127.0.0.1", "", port=moonraker_server.port)
+        assert info == {"free_bytes": 60, "used_bytes": 40}
+
+    async def test_storage_info_unreachable_host_returns_none(self):
+        info = await get_storage_info_async("127.0.0.1", "", port=_find_free_port())
+        assert info is None

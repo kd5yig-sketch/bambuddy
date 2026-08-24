@@ -41,6 +41,7 @@ from backend.app.schemas.printer import (
     PrinterUpdate,
     PrintOptionsResponse,
 )
+from backend.app.services import moonraker_files
 from backend.app.services.bambu_ftp import (
     cache_3mf_download,
     delete_file_async,
@@ -1424,6 +1425,26 @@ async def _load_printer_or_404(printer_id: int) -> Printer:
     return printer
 
 
+def _file_transfer_fns(printer: Printer):
+    """Pick the list/download/delete/storage async fns for this printer's
+    protocol, plus the extra kwargs each needs beyond the shared
+    (ip_address, access_code, path, printer_model=...) call shape.
+
+    Only the Moonraker fns take `port` — bambu_ftp's always use the fixed
+    Bambu FTPS port — so that's the one thing that can't be passed
+    unconditionally at every call site.
+    """
+    if printer.protocol == "klipper":
+        return (
+            moonraker_files.list_files_async,
+            moonraker_files.download_file_bytes_async,
+            moonraker_files.delete_file_async,
+            moonraker_files.get_storage_info_async,
+            {"port": printer.moonraker_port},
+        )
+    return (list_files_async, download_file_bytes_async, delete_file_async, get_storage_info_async, {})
+
+
 @router.get("/{printer_id}/files")
 async def list_printer_files(
     printer_id: int,
@@ -1432,8 +1453,9 @@ async def list_printer_files(
 ):
     """List files on the printer at the specified path."""
     printer = await _load_printer_or_404(printer_id)
+    list_fn, _, _, _, extra_kwargs = _file_transfer_fns(printer)
 
-    files = await list_files_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
+    files = await list_fn(printer.ip_address, printer.access_code, path, printer_model=printer.model, **extra_kwargs)
 
     # Add full path to each file
     for f in files:
@@ -1453,8 +1475,9 @@ async def download_printer_file(
 ):
     """Download a file from the printer."""
     printer = await _load_printer_or_404(printer_id)
+    _, download_fn, _, _, extra_kwargs = _file_transfer_fns(printer)
 
-    data = await download_file_bytes_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
+    data = await download_fn(printer.ip_address, printer.access_code, path, printer_model=printer.model, **extra_kwargs)
     if data is None:
         raise HTTPException(404, f"File not found: {path}")
 
@@ -1492,8 +1515,9 @@ async def get_printer_file_gcode(
     import io
 
     printer = await _load_printer_or_404(printer_id)
+    _, download_fn, _, _, extra_kwargs = _file_transfer_fns(printer)
 
-    data = await download_file_bytes_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
+    data = await download_fn(printer.ip_address, printer.access_code, path, printer_model=printer.model, **extra_kwargs)
     if data is None:
         raise HTTPException(404, f"File not found: {path}")
 
@@ -1797,14 +1821,15 @@ async def download_printer_files_as_zip(
         raise HTTPException(400, "No files specified")
 
     printer = await _load_printer_or_404(printer_id)
+    _, download_fn, _, _, extra_kwargs = _file_transfer_fns(printer)
 
     # Create ZIP in memory
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for path in paths:
             try:
-                data = await download_file_bytes_async(
-                    printer.ip_address, printer.access_code, path, printer_model=printer.model
+                data = await download_fn(
+                    printer.ip_address, printer.access_code, path, printer_model=printer.model, **extra_kwargs
                 )
                 if data:
                     filename = path.split("/")[-1]
@@ -1834,10 +1859,11 @@ async def delete_printer_file(
 ):
     """Delete a file from the printer."""
     printer = await _load_printer_or_404(printer_id)
+    _, _, delete_fn, _, extra_kwargs = _file_transfer_fns(printer)
 
     from backend.app.services.bambu_ftp import DeleteResult
 
-    result = await delete_file_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
+    result = await delete_fn(printer.ip_address, printer.access_code, path, printer_model=printer.model, **extra_kwargs)
     if result == DeleteResult.NOT_FOUND:
         raise HTTPException(404, f"File not found on printer: {path}")
     if result == DeleteResult.FAILED:
@@ -1853,8 +1879,11 @@ async def get_printer_storage(
 ):
     """Get storage information from the printer."""
     printer = await _load_printer_or_404(printer_id)
+    _, _, _, storage_fn, extra_kwargs = _file_transfer_fns(printer)
 
-    storage_info = await get_storage_info_async(printer.ip_address, printer.access_code, printer_model=printer.model)
+    storage_info = await storage_fn(
+        printer.ip_address, printer.access_code, printer_model=printer.model, **extra_kwargs
+    )
 
     return storage_info or {"used_bytes": None, "free_bytes": None}
 
