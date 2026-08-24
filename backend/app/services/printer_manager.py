@@ -843,7 +843,11 @@ class PrinterManager:
         ``BambuMQTTClient``).
         """
         client = self._clients.get(printer_id)
-        return client._drying_targets if client else None
+        # getattr, not a direct attribute access: MoonrakerClient has no AMS
+        # concept and so no _drying_targets cache at all (#basic-functionality
+        # audit — this crashed the websocket status loop on every push for a
+        # connected Klipper printer).
+        return getattr(client, "_drying_targets", None) if client else None
 
     def get_all_statuses(self) -> dict[int, PrinterState]:
         """Get status of all connected printers (checks for stale connections)."""

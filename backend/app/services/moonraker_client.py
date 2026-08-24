@@ -153,6 +153,21 @@ class MoonrakerClient:
             self._task.cancel()
         self._task = asyncio.get_running_loop().create_task(self._run_forever())
 
+    def mark_power_off(self) -> bool:
+        """Presume the printer lost power (smart plug switched off).
+
+        Simpler than BambuMQTTClient.mark_power_off's version: no self-healing
+        undo-if-it-keeps-talking logic, since the WebSocket connection itself
+        already proves liveness — if the printer is actually still powered,
+        the reconnect loop's next successful handshake sets `connected` back
+        to True and pushes a fresh status on its own.
+        """
+        if not self.state.connected:
+            return False
+        self.state.connected = False
+        self.state.state = "unknown"
+        return True
+
     # -- background connection loop -------------------------------------------
 
     async def _run_forever(self) -> None:

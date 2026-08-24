@@ -256,3 +256,32 @@ class TestReconnect:
         # Reconnect loop should pick the connection back up automatically.
         assert await _wait_until(lambda: client.state.connected, timeout=3.0)
         client.disconnect()
+
+
+class TestMarkPowerOff:
+    def test_mark_power_off_on_connected_client(self, connected_client):
+        assert connected_client.mark_power_off() is True
+        assert connected_client.state.connected is False
+        assert connected_client.state.state == "unknown"
+
+    def test_mark_power_off_on_disconnected_client_returns_false(self, moonraker_server):
+        client = MoonrakerClient(ip_address="127.0.0.1", port=moonraker_server.port)
+        assert client.mark_power_off() is False
+
+
+class TestPrinterManagerIntegration:
+    """Regression coverage for a real incident: PrinterManager.get_drying_targets
+    accessed BambuMQTTClient's private `_drying_targets` cache directly, which
+    crashed the websocket status loop for every connected Klipper printer
+    (AttributeError on every push — MoonrakerClient has no such attribute).
+    All of PrinterManager's own tests mock the client (MagicMock auto-creates
+    any attribute you touch, so it can never catch a missing-attribute bug),
+    so this exercises a real connected MoonrakerClient instead.
+    """
+
+    async def test_get_drying_targets_returns_none_for_klipper_client(self, connected_client):
+        from backend.app.services.printer_manager import PrinterManager
+
+        manager = PrinterManager()
+        manager._clients[1] = connected_client
+        assert manager.get_drying_targets(1) is None

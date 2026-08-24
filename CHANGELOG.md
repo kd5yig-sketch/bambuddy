@@ -2,6 +2,43 @@
 
 All notable changes to Bambuddy will be documented in this file.
 
+## [Unreleased] - Klipper/Moonraker fork - 2026-08-24
+
+### Added
+- **Klipper printer support via Moonraker** — printers can now be added as
+  "Klipper (Moonraker)" alongside Bambu Lab, with live status, temperature/
+  gcode/pause/resume/stop control, file browsing, and print queue/dispatch
+  (upload + start) all working through a new `MoonrakerClient`/
+  `moonraker_files.py` pair that plugs into the existing `PrinterManager`
+  behind a `Printer.protocol` field. The print queue UI hides Bambu-only
+  AMS/calibration controls when every selected printer is Klipper.
+
+### Fixed
+- **Live status crash for connected Klipper printers** — the websocket status
+  loop called `PrinterManager.get_drying_targets()`, which read a private
+  AMS-only cache (`_drying_targets`) directly off the printer client. Bambu
+  printers have that attribute; Klipper printers don't, so every status push
+  for a connected Klipper printer raised an `AttributeError` and the
+  websocket connection never delivered live updates. Fixed with a
+  `getattr` fallback.
+- **Chamber-light auto-toggle crash during plate detection** — plate
+  detection (works with any camera, not Bambu-specific) auto-toggles the
+  chamber light for better visibility before checking the bed. For a Klipper
+  printer with plate detection and an external camera enabled, this called
+  a Bambu-only client method that doesn't exist on `MoonrakerClient` and
+  would have crashed the check. Now guarded.
+- **Connection-recovery sweep logged spurious errors for Klipper printers**
+  — the periodic dead-MQTT-session watchdog iterates every connected
+  printer and reads an MQTT-specific attribute; for Klipper it doesn't
+  exist under that name, and the watchdog's fallback rebuild call has a
+  different signature on `MoonrakerClient`. The sweep now skips clients
+  that aren't MQTT-based instead of retrying and logging a warning on
+  every cycle.
+- Chamber-light, and the printer file browser (list/download/delete/
+  storage), are also fixed/guarded for Klipper printers on the control
+  panel and file-manager side — see the fork's own commit history on
+  `feature/klipper-support` for the full breakdown.
+
 ## [1.2.5.3] - 2026-08-15
 
 ### Added

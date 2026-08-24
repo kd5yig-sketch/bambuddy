@@ -2908,10 +2908,14 @@ async def on_print_start(printer_id: int, data: dict):
                         printer.plate_detection_roi_h,
                     )
 
-                # Auto-turn on chamber light if it's off for better detection
+                # Auto-turn on chamber light if it's off for better detection.
+                # Plate detection is a generic feature (works with any camera,
+                # not Bambu-gated), but chamber-light control is Bambu-only —
+                # MoonrakerClient has no set_chamber_light, so this needs its
+                # own guard rather than assuming every connected client has one.
                 light_was_off = False
                 client = printer_manager.get_client(printer_id)
-                if client and client.state:
+                if client and client.state and hasattr(client, "set_chamber_light"):
                     light_was_off = not client.state.chamber_light
                     if light_was_off:
                         logger.info("[PLATE CHECK] Turning on chamber light for printer %s", printer_id)
@@ -7441,6 +7445,14 @@ async def _recover_dead_printer_sessions() -> int:
 
     for printer_id, client in list(printer_manager._clients.items()):
         try:
+            # This whole recovery mechanism is paho/MQTT-specific (dead-session
+            # detection + a hard client rebuild) — MoonrakerClient's own
+            # reconnect loop already self-heals, uses a different attribute
+            # name, and force_reconnect_stale_session() doesn't take the
+            # reason string this function would pass it. Skip rather than let
+            # every sweep interval log a spurious AttributeError for it.
+            if not hasattr(client, "_last_message_time"):
+                continue
             if client.state.connected:
                 _connection_watchdog_last_attempt.pop(printer_id, None)
                 continue
